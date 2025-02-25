@@ -4,7 +4,6 @@ import { formatDate } from '../../utils/dataProcessing';
 import { ArrowUp, ArrowDown } from 'lucide-react';
 import Filters from './Filters';
 
-
 interface TradesListProps {
   filteredData: Trade[];
   filters: FilterOptions;
@@ -34,28 +33,83 @@ const TradesList: React.FC<TradesListProps> = ({
             <tr>
               <th className="p-3 text-left">Date</th>
               <th className="p-3 text-left">Asset</th>
-              <th className="p-3 text-left">Direction</th>
+              <th className="p-3 text-left">Type</th>
               <th className="p-3 text-left">Amount</th>
               <th className="p-3 text-left">Target Price</th>
-              <th className="p-3 text-left">Earning Rate</th>
+              <th className="p-3 text-left">APY</th>
               <th className="p-3 text-left">Status</th>
               <th className="p-3 text-left">Settle Price</th>
-              <th className="p-3 text-left">Result</th>
+              <th className="p-3 text-left">Outcome</th>
+              <th className="p-3 text-left">Return</th>
             </tr>
           </thead>
           <tbody>
             {filteredData.map(trade => {
-              // Determine if trade was a win/loss
-              let result = 'Pending';
-              let resultColor = 'text-gray-500';
+              // Determine if trade was a win/loss based on Binance Dual Investment rules
+              let outcome = 'Pending';
+              let outcomeColor = 'text-gray-500';
+              let returnValue = '-';
               
               if (trade.status === 'SETTLED') {
+                const settlePrice = parseFloat(trade.settlePrice || '0');
+                const targetPrice = parseFloat(trade.linkedPrice);
+                
+                // For "Sell High" (UP), target price reached means you sell at target price
+                // For "Buy Low" (DOWN), target price reached means you buy at target price
                 if (trade.type === 'UP') {
-                  result = parseFloat(trade.settlePrice || '0') > parseFloat(trade.linkedPrice) ? 'Win' : 'Loss';
+                  outcome = settlePrice >= targetPrice ? 
+                    `Sold ${trade.underlying} at ${targetPrice}` : 
+                    `Kept ${trade.underlying}`;
                 } else {
-                  result = parseFloat(trade.settlePrice || '0') < parseFloat(trade.linkedPrice) ? 'Win' : 'Loss';
+                  outcome = settlePrice <= targetPrice ? 
+                    `Bought ${trade.underlying} at ${targetPrice}` : 
+                    `Kept ${trade.investmentAsset}`;
                 }
-                resultColor = result === 'Win' ? 'text-green-600' : 'text-red-600';
+                
+                outcomeColor = 
+                  (trade.type === 'UP' && settlePrice >= targetPrice) || 
+                  (trade.type === 'DOWN' && settlePrice <= targetPrice) 
+                    ? 'text-green-600' 
+                    : 'text-blue-600';
+                
+                // Calculate actual return
+                const amount = parseFloat(trade.amount);
+                const earningRate = parseFloat(trade.earningRate);
+                // const targetPrice = parseFloat(trade.linkedPrice);
+                
+                // Get duration in days
+                const purchaseTime = new Date(parseInt(trade.puchaseTime));
+                const settleTime = new Date(parseInt(trade.projectSettleDateTime));
+                const durationDays = (settleTime.getTime() - purchaseTime.getTime()) / (1000 * 60 * 60 * 24);
+                
+                // APY to actual return for period (as a decimal)
+                const actualReturnRate = (earningRate / 100) * (durationDays / 365);
+                const returnAmountInInvestmentAsset = amount * actualReturnRate;
+                
+                // Format the display value based on whether target price was reached
+                // const settlePrice = parseFloat(trade.settlePrice || '0');
+                const targetReached = (trade.type === 'UP' && settlePrice >= targetPrice) || 
+                                      (trade.type === 'DOWN' && settlePrice <= targetPrice);
+                
+                if (targetReached) {
+                  if (trade.type === 'DOWN') {
+                    // For Buy Low with target reached, return is in the target asset (e.g., SOL)
+                    const baseAssetAmount = amount / targetPrice; // Base amount at target price
+                    const interestAssetAmount = returnAmountInInvestmentAsset / targetPrice; // Interest in asset
+                    
+                    returnValue = `${(actualReturnRate * 100).toFixed(4)}% (${interestAssetAmount.toFixed(8)} ${trade.underlying})`;
+                  } else {
+                    // For Sell High with target reached, return is in USDT/USDC
+                    returnValue = `${(actualReturnRate * 100).toFixed(4)}% (${returnAmountInInvestmentAsset.toFixed(2)})`;
+                  }
+                } else {
+                  // When target not reached, return is in the original investment asset
+                  if (trade.investmentAsset === 'USDT' || trade.investmentAsset === 'USDC') {
+                    returnValue = `${(actualReturnRate * 100).toFixed(4)}% (${returnAmountInInvestmentAsset.toFixed(2)})`;
+                  } else {
+                    returnValue = `${(actualReturnRate * 100).toFixed(4)}% (${returnAmountInInvestmentAsset.toFixed(8)} ${trade.investmentAsset})`;
+                  }
+                }
               }
               
               return (
@@ -64,8 +118,14 @@ const TradesList: React.FC<TradesListProps> = ({
                   <td className="p-3">{trade.underlying}</td>
                   <td className="p-3">
                     <span className={`inline-flex items-center ${trade.type === 'UP' ? 'text-green-600' : 'text-red-600'}`}>
-                      {trade.type === 'UP' ? <ArrowUp size={16} className="mr-1" /> : <ArrowDown size={16} className="mr-1" />}
-                      {trade.type}
+                      {trade.type === 'UP' ? 
+                        <>
+                          <ArrowUp size={16} className="mr-1" /> Sell High
+                        </> : 
+                        <>
+                          <ArrowDown size={16} className="mr-1" /> Buy Low
+                        </>
+                      }
                     </span>
                   </td>
                   <td className="p-3">
@@ -83,15 +143,18 @@ const TradesList: React.FC<TradesListProps> = ({
                   <td className="p-3">
                     {trade.settlePrice ? `$${parseFloat(trade.settlePrice).toLocaleString()}` : '-'}
                   </td>
-                  <td className={`p-3 font-medium ${resultColor}`}>
-                    {result}
+                  <td className={`p-3 font-medium ${outcomeColor}`}>
+                    {outcome}
+                  </td>
+                  <td className="p-3">
+                    {returnValue}
                   </td>
                 </tr>
               );
             })}
             {filteredData.length === 0 && (
               <tr>
-                <td colSpan={9} className="p-4 text-center text-gray-500">
+                <td colSpan={10} className="p-4 text-center text-gray-500">
                   No trades found matching the current filters
                 </td>
               </tr>

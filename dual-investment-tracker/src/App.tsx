@@ -6,6 +6,8 @@ import InputSection from './components/InputSection';
 import Dashboard from './components/Dashboard';
 import TradesList from './components/TradesList';
 import Header from './components/Header';
+import DualInvestmentExplainer from './components/DualInvestmentExplainer';
+
 
 const App: React.FC = () => {
   const [investmentData, setInvestmentData] = useState<Trade[]>([]);
@@ -17,6 +19,7 @@ const App: React.FC = () => {
     losingTrades: 0,
     averageReturn: 0,
     totalInvestment: 0,
+    activeInvestment: 0,
     byAssetType: {},
     byDirection: {}
   });
@@ -69,6 +72,9 @@ const App: React.FC = () => {
       <Header />
       <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
         <InputSection onDataSubmit={handleDataSubmit} />
+        
+        {/* Add the DualInvestmentExplainer component */}
+        <DualInvestmentExplainer />
         
         {/* Tabs Navigation */}
         <div className="flex border-b mb-6">

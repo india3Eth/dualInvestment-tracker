@@ -37,6 +37,7 @@ export interface Trade {
     losingTrades: number;
     averageReturn: number;
     totalInvestment: number;
+    activeInvestment?: number; // Added this field for active investments
     byAssetType: Record<string, number>;
     byDirection: Record<string, number>;
   }

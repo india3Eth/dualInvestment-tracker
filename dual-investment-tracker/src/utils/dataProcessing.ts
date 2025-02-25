@@ -16,26 +16,61 @@ export const calculateStats = (data: Trade[]): Stats => {
 
   // Get settled trades
   const settledTrades = data.filter(trade => trade.status === 'SETTLED');
+  const activeTrades = data.filter(trade => trade.status === 'PURCHASE_SUCCESS');
   
-  // Calculate wins/losses
+  // Calculate wins/losses based on Binance Dual Investment rules
   const winningTrades = settledTrades.filter(trade => {
+    const settlePrice = parseFloat(trade.settlePrice || '0');
+    const targetPrice = parseFloat(trade.linkedPrice);
+    
+    // For "Sell High" (UP), you win when settlement price is >= target price
+    // For "Buy Low" (DOWN), you win when settlement price is <= target price
     if (trade.type === 'UP') {
-      return parseFloat(trade.settlePrice || '0') > parseFloat(trade.linkedPrice);
+      return settlePrice >= targetPrice;
     } else if (trade.type === 'DOWN') {
-      return parseFloat(trade.settlePrice || '0') < parseFloat(trade.linkedPrice);
+      return settlePrice <= targetPrice;
     }
     return false;
   });
   
-  // Calculate average return
+  // Calculate returns
   let totalReturn = 0;
+  let totalSettledInvestment = 0;
+  
   settledTrades.forEach(trade => {
     const amount = parseFloat(trade.amount);
     const earningRate = parseFloat(trade.earningRate);
-    totalReturn += (amount * earningRate) / 100;
+    
+    // Convert to USD equivalent for consistent measurement
+    let usdValue = 0;
+    if (trade.investmentAsset === 'USDT' || trade.investmentAsset === 'USDC') {
+      usdValue = amount;
+    } else {
+      // For crypto assets, convert to USD based on the target price
+      usdValue = amount * parseFloat(trade.linkedPrice);
+    }
+    
+    totalSettledInvestment += usdValue;
+    
+                  // Calculate actual return (Dual Investment always pays the APY regardless of outcome)
+    const durationInDays = calculateDurationInDays(trade);
+    const annualizedReturn = earningRate;
+    
+    // APY is always applied on the investment amount, not the USD value
+    const actualReturn = (annualizedReturn / 100) * (durationInDays / 365);
+    const returnAmount = amount * actualReturn;
+    
+    // Convert return to USD for statistics
+    if (trade.investmentAsset === 'USDT' || trade.investmentAsset === 'USDC') {
+      totalReturn += returnAmount;
+    } else {
+      totalReturn += returnAmount * parseFloat(trade.linkedPrice);
+    }
   });
   
-  const averageReturn = settledTrades.length ? totalReturn / settledTrades.length : 0;
+  const averageReturn = settledTrades.length 
+    ? (totalReturn / totalSettledInvestment) * 100 
+    : 0;
   
   // Total investment by asset
   const byAssetType: Record<string, number> = {};
@@ -56,7 +91,7 @@ export const calculateStats = (data: Trade[]): Stats => {
     
     totalInvestment += usdValue;
     
-    // Count by asset type
+    // Count by asset type (underlying asset)
     if (!byAssetType[trade.underlying]) {
       byAssetType[trade.underlying] = 0;
     }
@@ -66,15 +101,44 @@ export const calculateStats = (data: Trade[]): Stats => {
     byDirection[trade.type] += usdValue;
   });
   
+  // Calculate active investment amount
+  const activeInvestment = activeTrades.reduce((sum, trade) => {
+    const amount = parseFloat(trade.amount);
+    
+    // Convert to USD equivalent
+    let usdValue = 0;
+    if (trade.investmentAsset === 'USDT' || trade.investmentAsset === 'USDC') {
+      usdValue = amount;
+    } else {
+      usdValue = amount * parseFloat(trade.linkedPrice);
+    }
+    
+    return sum + usdValue;
+  }, 0);
+  
   return {
     totalTrades: data.length,
     winningTrades: winningTrades.length,
     losingTrades: settledTrades.length - winningTrades.length,
     averageReturn,
     totalInvestment,
+    activeInvestment,
     byAssetType,
     byDirection
   };
+};
+
+// Helper function to calculate duration in days between purchase and settlement
+const calculateDurationInDays = (trade: Trade): number => {
+  if (!trade.puchaseTime || !trade.projectSettleDateTime) {
+    return 0;
+  }
+  
+  const purchaseTime = new Date(parseInt(trade.puchaseTime));
+  const settleTime = new Date(parseInt(trade.projectSettleDateTime));
+  
+  const durationMs = settleTime.getTime() - purchaseTime.getTime();
+  return durationMs / (1000 * 60 * 60 * 24); // Convert ms to days
 };
 
 export const applyFilters = (data: Trade[], filters: FilterOptions): Trade[] => {
@@ -107,7 +171,14 @@ export const applyFilters = (data: Trade[], filters: FilterOptions): Trade[] => 
   
   // Filter by status
   if (filters.status !== 'all') {
-    result = result.filter(item => item.status === filters.status);
+    result = result.filter(item => {
+      if (filters.status === 'PURCHASE_SUCCESS') {
+        return item.status === 'PURCHASE_SUCCESS';
+      } else if (filters.status === 'SETTLED') {
+        return item.status === 'SETTLED';
+      }
+      return true;
+    });
   }
   
   return result;
